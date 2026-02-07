@@ -16,7 +16,8 @@ from PIL import Image
 from typing import Dict, List, Tuple, Optional
 from sklearn.model_selection import GroupShuffleSplit
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+import torchvision.transforms as T
 
 
 # 4个PES评估子项列名
@@ -28,7 +29,6 @@ PES_COLUMNS = ['近中牙龈乳头', '远中牙龈乳头', '软组织形态', '�
 ROI_LABELS = {
     '种植牙': 'implant',    # Implant region
     '对侧牙': 'control',    # Contralateral tooth (control)
-    '上颌前牙': 'global'    # Maxillary anterior teeth (global view)
 }
 
 
@@ -163,13 +163,48 @@ def compute_class_weights(labels: np.ndarray) -> torch.Tensor:
     return torch.FloatTensor(full_weights)
 
 
+def build_train_preprocess(
+    preprocess,
+    enable_augment: bool = True,
+    flip_prob: float = 0.5,
+    jitter_strength: float = 0.05,
+    rotation_deg: float = 8.0,
+    blur_prob: float = 0.1
+):
+    """
+    基于BioMedCLIP预处理创建训练时的数据增强
+    Build train-time augmentations on top of BioMedCLIP preprocessing
+    """
+    if not enable_augment:
+        return preprocess
+
+    aug = T.Compose([
+        T.RandomHorizontalFlip(p=flip_prob),
+        T.ColorJitter(
+            brightness=jitter_strength,
+            contrast=jitter_strength,
+            saturation=jitter_strength
+        ),
+        T.RandomApply(
+            [T.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0))],
+            p=blur_prob
+        ),
+        T.RandomRotation(degrees=rotation_deg, fill=(0, 0, 0))
+    ])
+
+    def _aug_preprocess(img: Image.Image):
+        return preprocess(aug(img))
+
+    return _aug_preprocess
+
+
 class PESDataset(Dataset):
     """
     PES多任务分类数据集
     PES Multi-task Classification Dataset
     
     每个样本返回:
-    - 三路ROI图像 (implant, control, global)
+    - 两路ROI图像 (implant, control)
     - 4个PES子任务标签
     """
     
@@ -192,13 +227,13 @@ class PESDataset(Dataset):
     def __len__(self) -> int:
         return len(self.data_items)
     
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        返回三路ROI张量和4个标签
-        Return three ROI tensors and 4 labels
+        返回两路ROI张量和4个标签
+        Return two ROI tensors and 4 labels
         
         Returns:
-            (implant_tensor, control_tensor, global_tensor, labels_tensor)
+            (implant_tensor, control_tensor, labels_tensor)
         """
         item = self.data_items[idx]
         
@@ -210,9 +245,9 @@ class PESDataset(Dataset):
         json_path = item['json_path']
         rois = parse_labelme_json(json_path)
         
-        # 裁剪三个ROI区域 / Crop three ROI regions
+        # 裁剪两个ROI区域 / Crop two ROI regions
         roi_tensors = {}
-        for roi_name in ['implant', 'control', 'global']:
+        for roi_name in ['implant', 'control']:
             if roi_name in rois:
                 roi_image = crop_roi(image, rois[roi_name])
             else:
@@ -230,7 +265,6 @@ class PESDataset(Dataset):
         return (
             roi_tensors['implant'],
             roi_tensors['control'],
-            roi_tensors['global'],
             labels
         )
 
@@ -291,6 +325,80 @@ def build_data_items(
     return data_items
 
 
+def compute_label_distribution(data_items: List[Dict]) -> Dict[str, Dict[int, int]]:
+    """
+    统计每个任务的类别分布
+    Compute class distribution per task
+    """
+    dist = {col: {0: 0, 1: 0, 2: 0} for col in PES_COLUMNS}
+    for item in data_items:
+        labels = item['labels']
+        for i, col in enumerate(PES_COLUMNS):
+            dist[col][int(labels[i])] += 1
+    return dist
+
+
+def summarize_dataset(data_dir: str, label_file: str) -> Dict:
+    """
+    汇总数据集情况（图像/标签/ROI缺失等）
+    Summarize dataset stats (images, labels, ROI missing)
+    """
+    image_ids = []
+    patient_stats = {}
+    for patient_folder in os.listdir(data_dir):
+        folder_path = os.path.join(data_dir, patient_folder)
+        if not os.path.isdir(folder_path):
+            continue
+        patient_name = get_patient_name(patient_folder)
+        count = 0
+        for filename in os.listdir(folder_path):
+            if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                image_ids.append(os.path.splitext(filename)[0])
+                count += 1
+        if count > 0:
+            patient_stats[patient_name] = patient_stats.get(patient_name, 0) + count
+
+    df = pd.read_excel(label_file)
+    label_ids = [str(x).strip() for x in df['图像'].tolist()]
+
+    image_set = set(image_ids)
+    label_set = set(label_ids)
+    images_with_labels = image_set & label_set
+    labels_without_images = label_set - image_set
+    images_without_labels = image_set - label_set
+
+    data_items = build_data_items(data_dir, label_file)
+
+    roi_missing = {roi: 0 for roi in ROI_LABELS.values()}
+    for item in data_items:
+        rois = parse_labelme_json(item['json_path'])
+        for roi in ROI_LABELS.values():
+            if roi not in rois:
+                roi_missing[roi] += 1
+
+    summary = {
+        'total_images': len(image_ids),
+        'total_labels': len(label_ids),
+        'images_with_labels': len(images_with_labels),
+        'labels_without_images': len(labels_without_images),
+        'images_without_labels': len(images_without_labels),
+        'data_items': len(data_items),
+        'roi_missing_counts': roi_missing,
+        'roi_missing_ratio': {
+            roi: (roi_missing[roi] / len(data_items)) if data_items else 0.0
+            for roi in roi_missing
+        },
+        'patient_count': len(patient_stats),
+        'patient_image_stats': {
+            'min': min(patient_stats.values()) if patient_stats else 0,
+            'max': max(patient_stats.values()) if patient_stats else 0,
+            'mean': (sum(patient_stats.values()) / len(patient_stats)) if patient_stats else 0
+        },
+        'label_distribution': compute_label_distribution(data_items)
+    }
+    return summary
+
+
 def create_dataloaders(
     data_dir: str,
     label_file: str,
@@ -298,7 +406,13 @@ def create_dataloaders(
     batch_size: int = 8,
     num_workers: int = 4,
     test_size: float = 0.2,
-    random_state: int = 42
+    random_state: int = 42,
+    train_augment: bool = True,
+    use_weighted_sampler: bool = False,
+    flip_prob: float = 0.5,
+    jitter_strength: float = 0.05,
+    rotation_deg: float = 8.0,
+    blur_prob: float = 0.1
 ) -> Tuple[DataLoader, DataLoader, Dict[str, torch.Tensor]]:
     """
     创建训练和验证数据加载器
@@ -331,17 +445,43 @@ def create_dataloaders(
         class_weights[col] = compute_class_weights(train_labels[:, i])
     
     # 创建数据集 / Create datasets
-    train_dataset = PESDataset(train_items, preprocess, data_dir)
+    train_preprocess = build_train_preprocess(
+        preprocess,
+        enable_augment=train_augment,
+        flip_prob=flip_prob,
+        jitter_strength=jitter_strength,
+        rotation_deg=rotation_deg,
+        blur_prob=blur_prob
+    )
+    train_dataset = PESDataset(train_items, train_preprocess, data_dir)
     val_dataset = PESDataset(val_items, preprocess, data_dir)
     
     # 创建数据加载器 / Create data loaders
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=True
-    )
+    if use_weighted_sampler:
+        label_freq = {col: np.bincount(train_labels[:, i], minlength=3) for i, col in enumerate(PES_COLUMNS)}
+        inv_freq = {col: 1.0 / np.maximum(label_freq[col], 1) for col in PES_COLUMNS}
+        sample_weights = []
+        for item in train_items:
+            w = 0.0
+            for i, col in enumerate(PES_COLUMNS):
+                w += inv_freq[col][int(item['labels'][i])]
+            sample_weights.append(w / len(PES_COLUMNS))
+        sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            sampler=sampler,
+            num_workers=num_workers,
+            pin_memory=True
+        )
+    else:
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=True
+        )
     
     val_loader = DataLoader(
         val_dataset,
@@ -352,29 +492,3 @@ def create_dataloaders(
     )
     
     return train_loader, val_loader, class_weights
-
-
-if __name__ == '__main__':
-    # 最小可验证测试 / Minimal sanity check
-    print("Testing dataset module...")
-    
-    # 测试数据构建 / Test data building
-    DATA_DIR = '/data15/data15_5/yujun26/BA_PROJECT/红白美学标注'
-    LABEL_FILE = '/data15/data15_5/yujun26/BA_PROJECT/两次重新标注后校正.xlsx'
-    
-    data_items = build_data_items(DATA_DIR, LABEL_FILE)
-    print(f"Built {len(data_items)} data items")
-    
-    if len(data_items) > 0:
-        # 测试患者划分 / Test patient split
-        train_items, val_items = patient_group_split(data_items)
-        print(f"Train: {len(train_items)}, Val: {len(val_items)}")
-        
-        # 打印示例 / Print example
-        print(f"\nExample item: {data_items[0]}")
-        
-        # 测试ROI解析 / Test ROI parsing
-        rois = parse_labelme_json(data_items[0]['json_path'])
-        print(f"ROIs found: {list(rois.keys())}")
-        
-    print("\nDataset module test completed!")

@@ -1,11 +1,11 @@
 """
-visualize.py - 可视化模块
+visualize.py - Visualization module
 Visualization module for PES Multi-Task Classification
 
-功能 / Features:
-1. 训练曲线可视化 / Training curve visualization
-2. 混淆矩阵可视化 / Confusion matrix visualization
-3. 预测结果可视化 / Prediction result visualization with ROI overlay
+Features:
+1. Training curve visualization
+2. Confusion matrix visualization
+3. Prediction result visualization with ROI overlay
 """
 
 import os
@@ -21,23 +21,44 @@ from dataset import parse_labelme_json, PES_COLUMNS
 from model import PES_TASK_NAMES
 
 
-# 设置中文字体 / Set Chinese font
-plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial Unicode MS']
+plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-# 颜色配置 / Color configuration
+# Color configuration
 COLORS = {
-    'implant': '#FF6B6B',   # 红色 / Red
-    'control': '#4ECDC4',   # 青色 / Cyan
-    'global': '#45B7D1',    # 蓝色 / Blue
+    'implant': '#FF6B6B',
+    'control': '#4ECDC4',
+    'global': '#45B7D1',
 }
 
-# PES分数颜色 / PES score colors
+# PES score colors
 SCORE_COLORS = {
-    0: '#E74C3C',  # 红色 - 较差 / Red - Poor
-    1: '#F39C12',  # 橙色 - 中等 / Orange - Fair  
-    2: '#27AE60',  # 绿色 - 良好 / Green - Good
+    0: '#E74C3C',
+    1: '#F39C12',
+    2: '#27AE60',
 }
+
+TASK_NAME_MAP = {
+    '近中牙龈乳头': 'Mesial Papilla',
+    '远中牙龈乳头': 'Distal Papilla',
+    '软组织形态': 'Soft Tissue Contour',
+    '粘膜颜色': 'Mucosal Color',
+    '黏膜颜色': 'Mucosal Color',
+}
+
+ROI_NAME_MAP = {
+    'implant': 'Implant ROI',
+    'control': 'Control ROI',
+    'global': 'Global ROI',
+}
+
+
+def display_task_name(name: str) -> str:
+    return TASK_NAME_MAP.get(name, name)
+
+
+def display_column_name(name: str) -> str:
+    return TASK_NAME_MAP.get(name, name)
 
 
 def plot_training_curves(
@@ -46,13 +67,12 @@ def plot_training_curves(
     show: bool = True
 ):
     """
-    绘制训练曲线
     Plot training curves
     
     Args:
-        history_path: 训练历史JSON文件路径
-        output_path: 输出图像路径（可选）
-        show: 是否显示图像
+        history_path: Path to training_history.json
+        output_path: Output image path (optional)
+        show: Whether to display the plot
     """
     with open(history_path, 'r', encoding='utf-8') as f:
         history = json.load(f)
@@ -61,7 +81,7 @@ def plot_training_curves(
     
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     
-    # 损失曲线 / Loss curve
+    # Loss curve
     ax = axes[0]
     ax.plot(epochs, history['train_loss'], 'b-', label='Train Loss', linewidth=2)
     ax.plot(epochs, history['val_loss'], 'r-', label='Val Loss', linewidth=2)
@@ -71,7 +91,7 @@ def plot_training_curves(
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3)
     
-    # 准确率曲线 / Accuracy curve
+    # Accuracy curve
     ax = axes[1]
     ax.plot(epochs, history['val_accuracy'], 'g-', linewidth=2)
     ax.axhline(y=history['best_accuracy'], color='r', linestyle='--', 
@@ -82,7 +102,7 @@ def plot_training_curves(
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3)
     
-    # F1分数曲线 / F1 score curve
+    # F1 score curve
     ax = axes[2]
     ax.plot(epochs, history['val_f1'], 'm-', linewidth=2)
     ax.set_xlabel('Epoch', fontsize=12)
@@ -108,13 +128,12 @@ def plot_confusion_matrices(
     show: bool = True
 ):
     """
-    绘制混淆矩阵
     Plot confusion matrices for each task
     
     Args:
-        results_path: 验证结果JSON文件路径
-        output_path: 输出图像路径（可选）
-        show: 是否显示图像
+        results_path: Path to validation results JSON
+        output_path: Output image path (optional)
+        show: Whether to display the plot
     """
     with open(results_path, 'r', encoding='utf-8') as f:
         results = json.load(f)
@@ -122,13 +141,13 @@ def plot_confusion_matrices(
     fig, axes = plt.subplots(2, 2, figsize=(12, 12))
     axes = axes.flatten()
     
-    class_labels = ['0 (较差)', '1 (中等)', '2 (良好)']
+    class_labels = ['0 (Poor)', '1 (Fair)', '2 (Good)']
     
     for idx, task_name in enumerate(PES_TASK_NAMES):
         ax = axes[idx]
         cm = np.array(results[task_name]['confusion_matrix'])
         
-        # 绘制热力图 / Plot heatmap
+        # Plot heatmap
         sns.heatmap(
             cm, 
             annot=True, 
@@ -140,10 +159,11 @@ def plot_confusion_matrices(
             annot_kws={'size': 14}
         )
         
-        # 设置标签 / Set labels
+        # Set labels
         ax.set_xlabel('Predicted', fontsize=12)
         ax.set_ylabel('True', fontsize=12)
-        ax.set_title(f'{task_name}\nAcc: {results[task_name]["accuracy"]:.3f}, F1: {results[task_name]["f1"]:.3f}', 
+        title_name = display_task_name(task_name)
+        ax.set_title(f'{title_name}\nAcc: {results[task_name]["accuracy"]:.3f}, F1: {results[task_name]["f1"]:.3f}',
                      fontsize=12)
     
     plt.tight_layout()
@@ -166,49 +186,47 @@ def visualize_prediction(
     show: bool = True
 ):
     """
-    可视化单张图像的预测结果
     Visualize prediction result for a single image
     
     Args:
-        image_path: 图像文件路径
-        json_path: LabelMe JSON文件路径
-        prediction: 预测结果字典
-        output_path: 输出图像路径（可选）
-        show: 是否显示图像
+        image_path: Image file path
+        json_path: LabelMe JSON path
+        prediction: Prediction result dict
+        output_path: Output image path (optional)
+        show: Whether to display the plot
     """
-    # 加载图像 / Load image
+    # Load image
     image = Image.open(image_path).convert('RGB')
     draw = ImageDraw.Draw(image)
     
-    # 解析ROI / Parse ROIs
+    # Parse ROIs
     rois = parse_labelme_json(json_path)
     
-    # 绘制ROI边界框 / Draw ROI bounding boxes
-    roi_names_cn = {'implant': '种植牙', 'control': '对侧牙', 'global': '上颌前牙'}
+    # Draw ROI bounding boxes
     for roi_name, bbox in rois.items():
         x1, y1, x2, y2 = [int(c) for c in bbox]
         color = COLORS.get(roi_name, '#FFFFFF')
         
-        # 绘制矩形 / Draw rectangle
+        # Draw rectangle
         draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
         
-        # 绘制标签 / Draw label
-        label = roi_names_cn.get(roi_name, roi_name)
+        # Draw label
+        label = ROI_NAME_MAP.get(roi_name, roi_name)
         draw.text((x1, y1 - 20), label, fill=color)
     
-    # 创建图像和结果的组合视图 / Create combined view
+    # Create combined view
     fig, axes = plt.subplots(1, 2, figsize=(16, 8))
     
-    # 左侧：图像 / Left: Image
+    # Left: Image
     axes[0].imshow(np.array(image))
     axes[0].set_title('Image with ROIs', fontsize=14)
     axes[0].axis('off')
     
-    # 右侧：预测结果 / Right: Predictions
+    # Right: Predictions
     ax = axes[1]
     ax.axis('off')
     
-    # 构建结果文本 / Build result text
+    # Build result text
     result_text = "PES Prediction Results\n" + "=" * 40 + "\n\n"
     
     for task_name in PES_TASK_NAMES:
@@ -216,8 +234,7 @@ def visualize_prediction(
             pred = prediction['predictions'][task_name]
             score = pred['class']
             conf = pred['confidence']
-            color_name = ['Red', 'Orange', 'Green'][score]
-            result_text += f"{task_name}:\n"
+            result_text += f"{display_task_name(task_name)}:\n"
             result_text += f"  Score: {score} ({['Poor', 'Fair', 'Good'][score]})\n"
             result_text += f"  Confidence: {conf:.1%}\n\n"
     
@@ -229,20 +246,20 @@ def visualize_prediction(
             verticalalignment='top', fontfamily='monospace',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
-    # 绘制分数条形图 / Draw score bar chart
+    # Draw score bar chart
     scores = [prediction['predictions'][name]['class'] for name in PES_TASK_NAMES]
     colors = [SCORE_COLORS[s] for s in scores]
     
-    # 在右侧下方添加条形图 / Add bar chart at bottom right
+    # Add bar chart at bottom right
     ax_bar = fig.add_axes([0.55, 0.1, 0.4, 0.3])
     bars = ax_bar.bar(range(4), scores, color=colors)
     ax_bar.set_xticks(range(4))
-    ax_bar.set_xticklabels([name[:4] for name in PES_TASK_NAMES], rotation=45)
+    ax_bar.set_xticklabels([display_task_name(name) for name in PES_TASK_NAMES], rotation=30, ha='right')
     ax_bar.set_ylabel('Score')
     ax_bar.set_ylim(0, 2.5)
     ax_bar.set_title('PES Scores')
     
-    # 在条形图上添加数值 / Add values on bars
+    # Add values on bars
     for bar, score in zip(bars, scores):
         ax_bar.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
                     str(score), ha='center', va='bottom', fontsize=12)
@@ -266,14 +283,13 @@ def plot_class_distribution(
     show: bool = True
 ):
     """
-    绘制类别分布图
     Plot class distribution
     
     Args:
-        data_dir: 数据目录
-        label_file: 标签文件路径
-        output_path: 输出图像路径（可选）
-        show: 是否显示图像
+        data_dir: Data directory
+        label_file: Label file path
+        output_path: Output image path (optional)
+        show: Whether to display the plot
     """
     import pandas as pd
     
@@ -291,11 +307,11 @@ def plot_class_distribution(
         bars = ax.bar(counts.index, counts.values, color=colors)
         ax.set_xlabel('Class', fontsize=12)
         ax.set_ylabel('Count', fontsize=12)
-        ax.set_title(f'{col}', fontsize=14)
+        ax.set_title(display_column_name(col), fontsize=14)
         ax.set_xticks([0, 1, 2])
-        ax.set_xticklabels(['0 (较差)', '1 (中等)', '2 (良好)'])
+        ax.set_xticklabels(['0 (Poor)', '1 (Fair)', '2 (Good)'])
         
-        # 添加数值标签 / Add value labels
+        # Add value labels
         for bar in bars:
             height = bar.get_height()
             ax.text(bar.get_x() + bar.get_width()/2., height,
