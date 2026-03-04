@@ -5,7 +5,7 @@ A modular multi-task classification framework for PES (Pink Esthetic Score) eval
 This README reflects the **current experiment workflow**:
 - Stage1: architecture search (24 configs)
 - Stage2: LoRA search on the best Stage1 architecture (11 configs)
-- Model selection priority: **AUC first** (not ACC)
+- Model selection priority: **AUC first**
 
 ## 1. Current Experiment Objective
 
@@ -79,7 +79,7 @@ Stage2 config list:
 Optional control:
 - `p2_00_no_lora` (not included in default Stage2 jobs queue)
 
-## 5. Config Layout (after cleanup)
+## 5. Config Layout
 
 All active Stage1/Stage2 configs are now directly under `config/`:
 - `config/s1_*.py`
@@ -118,22 +118,8 @@ python3 scripts/schedule_train.py --jobs-file scripts/config2_stage1_jobs.txt --
 python3 scripts/schedule_train.py --jobs-file scripts/config2_stage2_jobs.txt --list-only
 ```
 
-## 7. AUC-First Selection Rule
 
-Checkpoint selection in training is based on validation `avg_auc`.
-
-When comparing models, use all three aspects together:
-1. Overfitting risk
-   - Example metric: `overfit_gap = best_auc - mean(last10 val_auc)`
-   - Smaller is better
-2. Convergence smoothness
-   - Example metric: `std(diff(val_auc))`
-   - Smaller is better
-3. AUC performance
-   - `best_auc` and `mean_auc`
-   - Larger is better
-
-## 8. Output Structure
+## 7. Output Structure
 
 Each run is saved to:
 
@@ -149,11 +135,3 @@ Key files:
 - `training_curves.png`
 - `confusion_matrices.png`
 - `auc_curves.png`
-
-## 9. Suggested Workflow
-
-1. Run Stage1 full grid.
-2. Rank models by AUC-first criteria (performance + overfit + smoothness).
-3. Set Stage1 winner in `config/phase2_base_best.py`.
-4. Run Stage2 (11 LoRA configs).
-5. Select final model by the same AUC-first policy.
