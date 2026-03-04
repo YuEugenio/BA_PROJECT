@@ -1,0 +1,5 @@
+# Baseline + focal-loss tuning
+clipvit_3stream_concat_linear_attnprojlora.t01_base_weighted_ce
+clipvit_3stream_concat_linear_attnprojlora.t02_focal_g1p5_b0p999
+clipvit_3stream_concat_linear_attnprojlora.t03_focal_g2p0_b0p999
+clipvit_3stream_concat_linear_attnprojlora.t04_focal_g1p5_b0p995

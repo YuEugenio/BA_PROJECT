@@ -1,0 +1,17 @@
+# Stage-2 LoRA sweep for phase2_base_best=config23 architecture (11 configs)
+# Singles (4)
+p2_01_lora_qkv_input
+p2_02_lora_attn_output
+p2_03_lora_qv_only
+p2_04_lora_mlp
+
+# Pairs (5)
+p2_05_lora_qkv_plus_attn_output
+p2_07_lora_qkv_plus_mlp
+p2_08_lora_qv_plus_attn_output
+p2_09_lora_qv_plus_mlp
+p2_10_lora_attn_output_plus_mlp
+
+# Triples (2)
+p2_06_lora_qkv_attn_output_mlp
+p2_11_lora_qv_attn_output_mlp
